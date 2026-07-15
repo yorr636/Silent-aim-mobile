@@ -465,6 +465,217 @@ task.spawn(function()
         if Settings.SilentEnabled then CurrentSilentTarget = calculateTarget(true) else CurrentSilentTarget = nil end
         if Settings.AimbotEnabled then CurrentAimTarget = calculateTarget(false) else CurrentAimTarget = nil end
 
+        if Settings.AimbotEnabled anl.BackgroundTransparency = 1
+    Label.Text = labelText
+    Label.TextColor3 = Color3.fromRGB(220, 220, 220)
+    Label.Font = Enum.Font.GothamSemibold
+    Label.TextSize = 11
+    Label.TextXAlignment = Enum.TextXAlignment.Left
+    Label.ZIndex = 93
+    Label.Parent = Frame
+
+    local Button = Instance.new("TextButton")
+    Button.AnchorPoint = Vector2.new(1, 0.5)
+    Button.Position = UDim2.new(1, -10, 0.5, 0)
+    Button.Size = UDim2.new(0, 45, 0, 24)
+    Button.BackgroundColor3 = default and Color3.fromRGB(0, 180, 216) or Color3.fromRGB(35, 35, 40)
+    Button.Text = default and "ON" or "OFF"
+    Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Button.Font = Enum.Font.GothamBold
+    Button.TextSize = 10
+    Button.ZIndex = 93
+    Button.Parent = Frame
+    Instance.new("UICorner", Button).CornerRadius = UDim.new(0, 4)
+
+    Button.MouseButton1Click:Connect(function()
+        state = not state
+        TweenService:Create(Button, TweenInfo.new(0.15), {BackgroundColor3 = state and Color3.fromRGB(0, 180, 216) or Color3.fromRGB(35, 35, 40)}):Play()
+        Button.Text = state and "ON" or "OFF"
+        callback(state)
+    end)
+end
+
+local function createSelector(parent, labelText, options, defaultIndex, callback)
+    local currentIndex = defaultIndex
+    local Frame = Instance.new("Frame")
+    Frame.Size = UDim2.new(1, -10, 0, 38)
+    Frame.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
+    Frame.ZIndex = 92
+    Frame.Parent = parent
+    Instance.new("UICorner", Frame).CornerRadius = UDim.new(0, 6)
+    
+    local Label = Instance.new("TextLabel")
+    Label.AnchorPoint = Vector2.new(0, 0.5)
+    Label.Position = UDim2.new(0, 10, 0.5, 0)
+    Label.Size = UDim2.new(0.5, 0, 0.8, 0)
+    Label.BackgroundTransparency = 1
+    Label.Text = labelText
+    Label.TextColor3 = Color3.fromRGB(220, 220, 220)
+    Label.Font = Enum.Font.GothamSemibold
+    Label.TextSize = 11
+    Label.TextXAlignment = Enum.TextXAlignment.Left
+    Label.ZIndex = 93
+    Label.Parent = Frame
+
+    local SelectorBtn = Instance.new("TextButton")
+    SelectorBtn.AnchorPoint = Vector2.new(1, 0.5)
+    SelectorBtn.Position = UDim2.new(1, -10, 0.5, 0)
+    SelectorBtn.Size = UDim2.new(0, 80, 0, 24)
+    SelectorBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
+    SelectorBtn.Text = options[currentIndex]
+    SelectorBtn.TextColor3 = Color3.fromRGB(0, 255, 255)
+    SelectorBtn.Font = Enum.Font.GothamBold
+    SelectorBtn.TextSize = 10
+    SelectorBtn.ZIndex = 93
+    SelectorBtn.Parent = Frame
+    Instance.new("UICorner", SelectorBtn).CornerRadius = UDim.new(0, 4)
+
+    SelectorBtn.MouseButton1Click:Connect(function()
+        currentIndex = currentIndex + 1
+        if currentIndex > #options then currentIndex = 1 end
+        SelectorBtn.Text = options[currentIndex]
+        callback(options[currentIndex])
+    end)
+end
+
+local function createNumberAdjuster(parent, labelText, minVal, maxVal, step, default, callback)
+    local value = default
+    local Frame = Instance.new("Frame")
+    Frame.Size = UDim2.new(1, -10, 0, 38)
+    Frame.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
+    Frame.ZIndex = 92
+    Frame.Parent = parent
+    Instance.new("UICorner", Frame).CornerRadius = UDim.new(0, 6)
+    
+    local Label = Instance.new("TextLabel")
+    Label.AnchorPoint = Vector2.new(0, 0.5)
+    Label.Position = UDim2.new(0, 10, 0.5, 0)
+    Label.Size = UDim2.new(0.5, 0, 0.8, 0)
+    Label.BackgroundTransparency = 1
+    Label.Text = labelText .. ": " .. tostring(value)
+    Label.TextColor3 = Color3.fromRGB(220, 220, 220)
+    Label.Font = Enum.Font.GothamSemibold
+    Label.TextSize = 11
+    Label.TextXAlignment = Enum.TextXAlignment.Left
+    Label.ZIndex = 93
+    Label.Parent = Frame
+
+    local PlusBtn = Instance.new("TextButton")
+    PlusBtn.AnchorPoint = Vector2.new(1, 0.5)
+    PlusBtn.Position = UDim2.new(1, -10, 0.5, 0)
+    PlusBtn.Size = UDim2.new(0, 24, 0, 24)
+    PlusBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
+    PlusBtn.Text = "+"
+    PlusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    PlusBtn.Font = Enum.Font.GothamBold
+    PlusBtn.ZIndex = 93
+    PlusBtn.Parent = Frame
+    Instance.new("UICorner", PlusBtn).CornerRadius = UDim.new(0, 4)
+
+    local MinusBtn = Instance.new("TextButton")
+    MinusBtn.AnchorPoint = Vector2.new(1, 0.5)
+    MinusBtn.Position = UDim2.new(1, -38, 0.5, 0)
+    MinusBtn.Size = UDim2.new(0, 24, 0, 24)
+    MinusBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
+    MinusBtn.Text = "-"
+    MinusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    MinusBtn.Font = Enum.Font.GothamBold
+    MinusBtn.ZIndex = 93
+    MinusBtn.Parent = Frame
+    Instance.new("UICorner", MinusBtn).CornerRadius = UDim.new(0, 4)
+
+    MinusBtn.MouseButton1Click:Connect(function()
+        value = math.max(minVal, value - step)
+        Label.Text = labelText .. ": " .. tostring(value)
+        callback(value)
+    end)
+    PlusBtn.MouseButton1Click:Connect(function()
+        value = math.min(maxVal, value + step)
+        Label.Text = labelText .. ": " .. tostring(value)
+        callback(value)
+    end)
+end
+
+createToggle(TabAimbot, "Ativar Aimbot", Settings.AimbotEnabled, function(val) Settings.AimbotEnabled = val end)
+createToggle(TabAimbot, "Trava Instantanea", Settings.AimbotInstant, function(val) Settings.AimbotInstant = val end)
+createToggle(TabAimbot, "Incluir Bots", Settings.AimbotBotSupport, function(val) Settings.AimbotBotSupport = val end)
+createToggle(TabAimbot, "Verificar Parede", Settings.AimbotWallCheck, function(val) Settings.AimbotWallCheck = val end)
+createSelector(TabAimbot, "Parte do Corpo", {"Head", "UpperTorso", "HumanoidRootPart"}, 1, function(val) Settings.AimbotTargetPart = val end)
+createToggle(TabAimbot, "Mostrar FOV", Settings.AimbotFovEnabled, function(val) Settings.AimbotFovEnabled = val end)
+createNumberAdjuster(TabAimbot, "Tamanho FOV", 20, 400, 10, Settings.AimbotFovRadius, function(val) Settings.AimbotFovRadius = val end)
+
+createToggle(TabSilent, "Ativar Silent Aim", Settings.SilentEnabled, function(val) Settings.SilentEnabled = val end)
+createToggle(TabSilent, "Incluir Bots", Settings.SilentBotSupport, function(val) Settings.SilentBotSupport = val end)
+createToggle(TabSilent, "Verificar Parede", Settings.SilentWallCheck, function(val) Settings.SilentWallCheck = val end)
+createSelector(TabSilent, "Parte do Corpo", {"Head", "UpperTorso", "HumanoidRootPart"}, 1, function(val) Settings.SilentTargetPart = val end)
+createToggle(TabSilent, "Mostrar FOV (Silent)", Settings.SilentFovEnabled, function(val) Settings.SilentFovEnabled = val end)
+createNumberAdjuster(TabSilent, "Tamanho FOV", 20, 400, 10, Settings.SilentFovRadius, function(val) Settings.SilentFovRadius = val end)
+
+createToggle(TabVisuals, "Chams (Visão de Raio-X)", Settings.ChamsEnabled, function(val) Settings.ChamsEnabled = val end)
+createToggle(TabVisuals, "Ignorar Aliados", Settings.ChamsTeamCheck, function(val) Settings.ChamsTeamCheck = val end)
+
+-- ==========================================
+-- 3. LÓGICA E MOTORES (TOTALMENTE ISOLADOS)
+-- ==========================================
+task.spawn(function()
+    local GlobalRaycastParams = RaycastParams.new()
+    GlobalRaycastParams.FilterType = Enum.RaycastFilterType.Exclude; GlobalRaycastParams.IgnoreWater = true
+
+    local function isVisible(targetPart)
+        local s, v = pcall(function()
+            local char = LocalPlayer.Character
+            if not char then return false end
+            GlobalRaycastParams.FilterDescendantsInstances = {char, targetPart.Parent}
+            return workspace:Raycast(camera.CFrame.Position, targetPart.Position - camera.CFrame.Position, GlobalRaycastParams) == nil
+        end)
+        return s and v
+    end
+
+    local function calculateTarget(isSilent)
+        local fovRadius = isSilent and Settings.SilentFovRadius or Settings.AimbotFovRadius
+        local teamCheck = isSilent and Settings.SilentTeamCheck or Settings.AimbotTeamCheck
+        local wallCheck = isSilent and Settings.SilentWallCheck or Settings.AimbotWallCheck
+        local targetPartName = isSilent and Settings.SilentTargetPart or Settings.AimbotTargetPart
+        local botSupport = isSilent and Settings.SilentBotSupport or Settings.AimbotBotSupport
+
+        local bestPart = nil
+        local shortestDistance = math.huge
+        local screenCenter = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
+
+        local function checkEntity(character)
+            if not character then return end
+            local humanoid = character:FindFirstChildOfClass("Humanoid")
+            local targetPart = character:FindFirstChild(targetPartName) or character:FindFirstChild("Head") or character:FindFirstChild("HumanoidRootPart")
+            
+            if humanoid and humanoid.Health > 0 and targetPart then
+                local screenPos, onScreen = camera:WorldToViewportPoint(targetPart.Position)
+                if onScreen then
+                    local dist = (Vector2.new(screenPos.X, screenPos.Y) - screenCenter).Magnitude
+                    if dist <= fovRadius then
+                        if wallCheck and not isVisible(targetPart) then return end
+                        if dist < shortestDistance then shortestDistance = dist; bestPart = targetPart end
+                    end
+                end
+            end
+        end
+
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                if teamCheck and player.Team == LocalPlayer.Team then continue end
+                checkEntity(player.Character)
+            end
+        end
+        if botSupport then for _, bot in ipairs(BotList) do checkEntity(bot) end end
+
+        return bestPart
+    end
+
+    RunService.RenderStepped:Connect(function()
+        updateFovCircles()
+        
+        if Settings.SilentEnabled then CurrentSilentTarget = calculateTarget(true) else CurrentSilentTarget = nil end
+        if Settings.AimbotEnabled then CurrentAimTarget = calculateTarget(false) else CurrentAimTarget = nil end
+
         if Settings.AimbotEnabled an        local delta = input.Position - dragStart
         FloatingButton.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
     end
