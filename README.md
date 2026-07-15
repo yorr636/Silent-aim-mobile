@@ -1,81 +1,456 @@
-# Silent-aim-mobile
+--===================================================================================--
+--                SISTEMA DE ASSISTÊNCIA E INTERFACE GRÁFICA AVANÇADA               --
+--===================================================================================--
+
+--// Serviços do Roblox
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
+local CoreGui = game:GetService("CoreGui")
+local TweenService = game:GetService("TweenService")
+
+--// Referências Globais
 local LocalPlayer = Players.LocalPlayer
-local Mouse = LocalPlayer:GetMouse()
 local Camera = workspace.CurrentCamera
 
--- ==========================================
--- CONFIGURAÇÕES E ESTADO
--- ==========================================
-local SilentAimEnabled = false
-local TeamCheckEnabled = true
-local WallCheckEnabled = true
-local AimFOV = 150 -- Valor inicial do FOV
+--// Configurações Globais (Estado Inicial)
+local Config = {
+    AimbotEnabled = false,
+    TeamCheck = true,
+    WallCheck = true,
+    TargetNPCs = true,
+    FovRadius = 150,
+    FovVisible = true,
+    ChamsEnabled = false,
+    Smoothness = 0.15, -- Suavização do movimento da câmera (0.1 = Rápido, 0.5 = Lento)
+}
 
--- ==========================================
--- SUPORTE A ARRASTAR (MOUSE & TOUCH)
--- ==========================================
-local function MakeDraggable(Frame, Handle)
-	local Dragging = false
-	local DragInput, DragStart, StartPosition
+--// Instanciando Desenhos Bidimensionais (FOV)
+local FovCircle = Drawing.new("Circle")
+FovCircle.Thickness = 1.5
+FovCircle.Color = Color3.fromRGB(0, 255, 127)
+FovCircle.Filled = false
+FovCircle.Transparency = 0.8
+FovCircle.NumSides = 64
+FovCircle.Visible = Config.FovVisible
+FovCircle.Radius = Config.FovRadius
 
-	local function Update(Input)
-		local Delta = Input.Position - DragStart
-		Frame.Position = UDim2.new(
-			StartPosition.X.Scale, 
-			StartPosition.X.Offset + Delta.X, 
-			StartPosition.Y.Scale, 
-			StartPosition.Y.Offset + Delta.Y
-		)
-	end
+--===================================================================================--
+--                             Criação da Interface Gráfica                           --
+--===================================================================================--
 
-	Handle.InputBegan:Connect(function(Input)
-		if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
-			Dragging = true
-			DragStart = Input.Position
-			StartPosition = Frame.Position
-
-			Input.Changed:Connect(function()
-				if Input.UserInputState == Enum.UserInputState.End then
-					Dragging = false
-				end
-			end)
-		end
-	end)
-
-	Handle.InputChanged:Connect(function(Input)
-		if Input.UserInputType == Enum.UserInputType.MouseMovement or Input.UserInputType == Enum.UserInputType.Touch then
-			DragInput = Input
-		end
-	end)
-
-	UserInputService.InputChanged:Connect(function(Input)
-		if Input == DragInput and Dragging then
-			Update(Input)
-		end
-	end)
+-- Criando ScreenGui protegida (tenta colocar no CoreGui se disponível, caso contrário vai no PlayerGui)
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "AmbienteDeTestes_Gui"
+ScreenGui.ResetOnSpawn = false
+pcall(function()
+    ScreenGui.Parent = CoreGui
+end)
+if not ScreenGui.Parent then
+    ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 end
 
--- ==========================================
--- CRIAÇÃO DA UI (CLEAN & MODERN)
--- ==========================================
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "SilentAimSystem"
-ScreenGui.ResetOnSpawn = false
-ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+-- Botão Flutuante Arrastável para Celular / PC
+local FloatingButton = Instance.new("TextButton")
+FloatingButton.Name = "FloatingButton"
+FloatingButton.Size = UDim2.new(0, 60, 0, 60)
+FloatingButton.Position = UDim2.new(0.1, 0, 0.4, 0)
+FloatingButton.BackgroundColor3 = Color3.fromRGB(31, 31, 46)
+FloatingButton.Text = "MENU"
+FloatingButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+FloatingButton.Font = Enum.Font.GothamBold
+FloatingButton.TextSize = 14
+FloatingButton.BorderSizePixel = 0
+FloatingButton.Parent = ScreenGui
 
--- 1. BOTÃO FLUTUANTE (ABRIR/FECHAR)
-local FloatButton = Instance.new("TextButton")
-FloatButton.Name = "FloatButton"
-FloatButton.Size = UDim2.new(0, 50, 0, 50)
-FloatButton.Position = UDim2.new(0.05, 0, 0.2, 0)
-FloatButton.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-FloatButton.Text = "AIM"
-FloatButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-FloatButton.Font = Enum.Font.GothamBold
-FloatButton.TextSize = 14
+local UICornerFloat = Instance.new("UICorner")
+UICornerFloat.CornerRadius = UDim.new(1, 0) -- Redondo
+UICornerFloat.Parent = FloatingButton
+
+local UIStrokeFloat = Instance.new("UIStroke")
+UIStrokeFloat.Color = Color3.fromRGB(0, 180, 216)
+UIStrokeFloat.Width = 2
+UIStrokeFloat.Parent = FloatingButton
+
+-- Mecânica de Arrastar o Botão Flutuante (Segura o Touch ou Clique)
+local dragging, dragInput, dragStart, startPos
+local function updateDrag(input)
+    local delta = input.Position - dragStart
+    FloatingButton.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+end
+
+FloatingButton.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = FloatingButton.Position
+        
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+FloatingButton.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        updateDrag(input)
+    end
+end)
+
+-- Painel Principal do Menu
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Size = UDim2.new(0, 320, 0, 400)
+MainFrame.Position = UDim2.new(0.5, -160, 0.5, -200)
+MainFrame.BackgroundColor3 = Color3.fromRGB(24, 24, 37)
+MainFrame.BorderSizePixel = 0
+MainFrame.Visible = false
+MainFrame.Parent = ScreenGui
+
+local UICornerMain = Instance.new("UICorner")
+UICornerMain.CornerRadius = UDim.new(0, 10)
+UICornerMain.Parent = MainFrame
+
+local UIStrokeMain = Instance.new("UIStroke")
+UIStrokeMain.Color = Color3.fromRGB(45, 45, 68)
+UIStrokeMain.Width = 1
+UIStrokeMain.Parent = MainFrame
+
+-- Título do Menu
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 45)
+Title.BackgroundColor3 = Color3.fromRGB(30, 30, 46)
+Title.Text = "Menu de Testes Avançado"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 16
+Title.BorderSizePixel = 0
+Title.Parent = MainFrame
+
+local UICornerTitle = Instance.new("UICorner")
+UICornerTitle.CornerRadius = UDim.new(0, 10)
+UICornerTitle.Parent = Title
+
+-- Container dos Itens do Menu (Lista)
+local Container = Instance.new("ScrollingFrame")
+Container.Size = UDim2.new(1, -20, 1, -65)
+Container.Position = UDim2.new(0, 10, 0, 55)
+Container.BackgroundTransparency = 1
+Container.BorderSizePixel = 0
+Container.ScrollBarThickness = 4
+Container.CanvasSize = UDim2.new(0, 0, 0, 420)
+Container.Parent = MainFrame
+
+local UIListLayout = Instance.new("UIListLayout")
+UIListLayout.Padding = UDim.new(0, 10)
+UIListLayout.Parent = Container
+
+-- Alternar visibilidade do Menu ao clicar no Botão Flutuante
+FloatingButton.MouseButton1Click:Connect(function()
+    MainFrame.Visible = not MainFrame.Visible
+end)
+
+--===================================================================================--
+--                         Funções Utilitárias para Componentes                      --
+--===================================================================================--
+
+-- Criador de Botão Liga/Desliga (Toggle)
+local function CreateToggle(name, default, callback)
+    local Frame = Instance.new("Frame")
+    Frame.Size = UDim2.new(1, 0, 0, 40)
+    Frame.BackgroundTransparency = 1
+    Frame.Parent = Container
+
+    local Label = Instance.new("TextLabel")
+    Label.Size = UDim2.new(0.7, 0, 1, 0)
+    Label.BackgroundTransparency = 1
+    Label.Text = "  " .. name
+    Label.TextColor3 = Color3.fromRGB(200, 200, 200)
+    Label.Font = Enum.Font.GothamSemibold
+    Label.TextSize = 14
+    Label.TextXAlignment = Enum.TextXAlignment.Left
+    Label.Parent = Frame
+
+    local Button = Instance.new("TextButton")
+    Button.Size = UDim2.new(0.25, 0, 0.8, 0)
+    Button.Position = UDim2.new(0.75, 0, 0.1, 0)
+    Button.BorderSizePixel = 0
+    Button.Text = ""
+    Button.Parent = Frame
+
+    local Corner = Instance.new("UICorner")
+    Corner.CornerRadius = UDim.new(0, 6)
+    Corner.Parent = Button
+
+    local Stroke = Instance.new("UIStroke")
+    Stroke.Color = Color3.fromRGB(60, 60, 80)
+    Stroke.Width = 1
+    Stroke.Parent = Button
+
+    local state = default
+    local function updateVisual()
+        if state then
+            Button.BackgroundColor3 = Color3.fromRGB(0, 180, 216)
+            Button.Text = "ATIVO"
+            Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+        else
+            Button.BackgroundColor3 = Color3.fromRGB(45, 45, 60)
+            Button.Text = "OFF"
+            Button.TextColor3 = Color3.fromRGB(150, 150, 150)
+        end
+    end
+    updateVisual()
+
+    Button.MouseButton1Click:Connect(function()
+        state = not state
+        updateVisual()
+        callback(state)
+    end)
+end
+
+-- Criador de Controles Deslizantes (Sliders)
+local function CreateSlider(name, min, max, default, callback)
+    local Frame = Instance.new("Frame")
+    Frame.Size = UDim2.new(1, 0, 0, 50)
+    Frame.BackgroundTransparency = 1
+    Frame.Parent = Container
+
+    local Label = Instance.new("TextLabel")
+    Label.Size = UDim2.new(0.6, 0, 0.5, 0)
+    Label.BackgroundTransparency = 1
+    Label.Text = "  " .. name
+    Label.TextColor3 = Color3.fromRGB(200, 200, 200)
+    Label.Font = Enum.Font.GothamSemibold
+    Label.TextSize = 13
+    Label.TextXAlignment = Enum.TextXAlignment.Left
+    Label.Parent = Frame
+
+    local ValLabel = Instance.new("TextLabel")
+    ValLabel.Size = UDim2.new(0.4, 0, 0.5, 0)
+    ValLabel.Position = UDim2.new(0.6, 0, 0, 0)
+    ValLabel.BackgroundTransparency = 1
+    ValLabel.Text = tostring(default)
+    ValLabel.TextColor3 = Color3.fromRGB(0, 180, 216)
+    ValLabel.Font = Enum.Font.GothamBold
+    ValLabel.TextSize = 13
+    ValLabel.TextXAlignment = Enum.TextXAlignment.Right
+    ValLabel.Parent = Frame
+
+    local SliderBar = Instance.new("TextButton")
+    SliderBar.Size = UDim2.new(1, -10, 0, 6)
+    SliderBar.Position = UDim2.new(0, 5, 0.7, 0)
+    SliderBar.BackgroundColor3 = Color3.fromRGB(45, 45, 60)
+    SliderBar.BorderSizePixel = 0
+    SliderBar.Text = ""
+    SliderBar.Parent = Frame
+
+    local Fill = Instance.new("Frame")
+    Fill.Size = UDim2.new((default - min) / (max - min), 0, 1, 0)
+    Fill.BackgroundColor3 = Color3.fromRGB(0, 180, 216)
+    Fill.BorderSizePixel = 0
+    Fill.Parent = SliderBar
+
+    local active = false
+    local function snap(input)
+        local ratio = math.clamp((input.Position.X - SliderBar.AbsolutePosition.X) / SliderBar.AbsoluteSize.X, 0, 1)
+        local value = math.round(min + (max - min) * ratio)
+        Fill.Size = UDim2.new(ratio, 0, 1, 0)
+        ValLabel.Text = tostring(value)
+        callback(value)
+    end
+
+    SliderBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            active = true
+            snap(input)
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if active and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            snap(input)
+        end
+    end)
+
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            active = false
+        end
+    end)
+end
+
+--===================================================================================--
+--                       Injeção de Opções na UI do Usuário                           --
+--===================================================================================--
+
+CreateToggle("Ativar Aimbot", Config.AimbotEnabled, function(state) Config.AimbotEnabled = state end)
+CreateToggle("Ver Círculo de FOV", Config.FovVisible, function(state) Config.FovVisible = state end)
+CreateSlider("Tamanho do FOV", 50, 400, Config.FovRadius, function(value) Config.FovRadius = value end)
+CreateToggle("Verificação de Times (Team)", Config.TeamCheck, function(state) Config.TeamCheck = state end)
+CreateToggle("Verificação de Parede (Wall)", Config.WallCheck, function(state) Config.WallCheck = state end)
+CreateToggle("Detectar NPCs (Bots)", Config.TargetNPCs, function(state) Config.TargetNPCs = state end)
+CreateToggle("Ativar Chams (Inimigos)", Config.ChamsEnabled, function(state) Config.ChamsEnabled = state end)
+
+--===================================================================================--
+--                         Lógica Principal de Assistência                           --
+--===================================================================================--
+
+-- Verifica se há objetos bloqueando a visão direta para o alvo (Raycast)
+local function isPointVisible(targetPosition, character)
+    local origin = Camera.CFrame.Position
+    local direction = targetPosition - origin
+    
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = {LocalPlayer.Character, character}
+    params.IgnoreWater = true
+    
+    local result = workspace:Raycast(origin, direction, params)
+    return result == nil -- Retorna verdadeiro se o feixe não colidir com nenhum obstáculo
+end
+
+-- Seleciona o melhor alvo baseado no FOV estático no centro da tela
+local function GetClosestTarget()
+    local closestTarget = nil
+    local shortestDistance = math.huge
+    local screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+
+    -- Função interna para avaliar um modelo (seja jogador ou NPC)
+    local function evaluateCandidate(model, isNpc)
+        if not model then return end
+        
+        -- Verifica se o candidato está vivo
+        local humanoid = model:FindFirstChildOfClass("Humanoid")
+        local rootPart = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Head")
+        
+        if humanoid and humanoid.Health > 0 and rootPart then
+            -- Team Check
+            if not isNpc and Config.TeamCheck then
+                local playerInstance = Players:GetPlayerFromCharacter(model)
+                if playerInstance and playerInstance.Team == LocalPlayer.Team then
+                    return
+                end
+            end
+            
+            -- Projeta a posição 3D na Tela 2D
+            local screenPos, onScreen = Camera:WorldToViewportPoint(rootPart.Position)
+            if onScreen then
+                -- O FOV centralizado calcula a distância a partir do centro físico da tela
+                local distanceToCenter = (Vector2.new(screenPos.X, screenPos.Y) - screenCenter).Magnitude
+                
+                if distanceToCenter <= Config.FovRadius and distanceToCenter < shortestDistance then
+                    -- Wall Check
+                    if Config.WallCheck and not isPointVisible(rootPart.Position, model) then
+                        return
+                    end
+                    
+                    shortestDistance = distanceToCenter
+                    closestTarget = rootPart
+                end
+            end
+        end
+    end
+
+    -- Escaneia Jogadores Reais
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            evaluateCandidate(player.Character, false)
+        end
+    end
+
+    -- Escaneia Bots e NPCs no Workspace
+    if Config.TargetNPCs then
+        for _, descendant in ipairs(workspace:GetDescendants()) do
+            if descendant:IsA("Model") and not Players:GetPlayerFromCharacter(descendant) and descendant ~= LocalPlayer.Character then
+                evaluateCandidate(descendant, true)
+            end
+        end
+    end
+
+    return closestTarget
+end
+
+-- Renderização Ativa (Executada a cada Frame)
+RunService.RenderStepped:Connect(function()
+    -- Atualiza dinamicamente a posição e tamanho do FOV Estático
+    FovCircle.Position = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+    FovCircle.Radius = Config.FovRadius
+    FovCircle.Visible = Config.FovVisible
+
+    -- Processa o travamento de mira (Aimbot)
+    if Config.AimbotEnabled then
+        local target = GetClosestTarget()
+        if target then
+            -- Mover a Câmera suavemente em direção à parte alvo (geralmente Head ou RootPart)
+            local targetCFrame = CFrame.new(Camera.CFrame.Position, target.Position)
+            Camera.CFrame = Camera.CFrame:Lerp(targetCFrame, Config.Smoothness)
+        end
+    end
+end)
+
+--===================================================================================--
+--                    Chams (Visualizador de Inimigos por Paredes)                   --
+--===================================================================================--
+
+local highlightStorage = {}
+
+local function applyHighlight(character, isEnemy)
+    if not isEnemy then
+        if highlightStorage[character] then
+            highlightStorage[character]:Destroy()
+            highlightStorage[character] = nil
+        end
+        return
+    end
+
+    if not highlightStorage[character] then
+        local highlight = Instance.new("Highlight")
+        highlight.Name = "Test_Highlight"
+        highlight.FillColor = Color3.fromRGB(255, 30, 70)
+        highlight.FillTransparency = 0.5
+        highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+        highlight.OutlineTransparency = 0.1
+        highlight.Adornee = character
+        highlight.Parent = ScreenGui
+        highlightStorage[character] = highlight
+    end
+end
+
+-- Ciclo contínuo de controle de efeitos visuais (Chams)
+task.spawn(function()
+    while task.wait(0.5) do
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Character then
+                local isEnemy = true
+                if Config.TeamCheck and player.Team == LocalPlayer.Team then
+                    isEnemy = false
+                end
+                
+                if Config.ChamsEnabled and isEnemy then
+                    applyHighlight(player.Character, true)
+                else
+                    applyHighlight(player.Character, false)
+                end
+            end
+        end
+        
+        -- Remoção segura para jogadores que desconectaram
+        for char, highlight in pairs(highlightStorage) do
+            if not char or not char.Parent then
+                highlight:Destroy()
+                highlightStorage[char] = nil
+            end
+        end
+    end
+end)FloatButton.TextSize = 14
 FloatButton.BorderSizePixel = 0
 FloatButton.Parent = ScreenGui
 
