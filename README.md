@@ -1,70 +1,460 @@
---===================================================================================--
---                SISTEMA DE ASSISTÊNCIA E INTERFACE GRÁFICA AVANÇADA               --
---===================================================================================--
+-- [[ ASSISTENTE MOBILE MULTI-FUNCIONAL COMPLETO ]] --
+-- Desenvolvido para testes em ambientes controlados.
 
---// Serviços do Roblox
 local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local CoreGui = game:GetService("CoreGui")
-local TweenService = game:GetService("TweenService")
+local camera = workspace.CurrentCamera
 
---// Referências Globais
-local LocalPlayer = Players.LocalPlayer
-local Camera = workspace.CurrentCamera
-
---// Configurações Globais (Estado Inicial)
-local Config = {
+-- Configurações Iniciais do Script
+local Settings = {
     AimbotEnabled = false,
-    TeamCheck = true,
-    WallCheck = true,
-    TargetNPCs = true,
-    FovRadius = 150,
-    FovVisible = true,
+    SilentAimEnabled = false,
+    TeamCheck = false,
+    WallCheck = false,
+    TargetPart = "Head", -- "Head" ou "UpperTorso" / "HumanoidRootPart"
+    FovEnabled = false,
+    FovRadius = 100,
     ChamsEnabled = false,
-    Smoothness = 0.15, -- Suavização do movimento da câmera (0.1 = Rápido, 0.5 = Lento)
+    ChamsTeamCheck = false,
+    Smoothness = 0.15 -- Suavidade do Aimbot (quanto menor, mais rápido puxa)
 }
 
---// Instanciando Desenhos Bidimensionais (FOV)
-local FovCircle = Drawing.new("Circle")
-FovCircle.Thickness = 1.5
-FovCircle.Color = Color3.fromRGB(0, 255, 127)
-FovCircle.Filled = false
-FovCircle.Transparency = 0.8
-FovCircle.NumSides = 64
-FovCircle.Visible = Config.FovVisible
-FovCircle.Radius = Config.FovRadius
+-- Armazenamento de Highlights (Chams)
+local ActiveHighlights = {}
 
---===================================================================================--
---                             Criação da Interface Gráfica                           --
---===================================================================================--
-
--- Criando ScreenGui protegida (tenta colocar no CoreGui se disponível, caso contrário vai no PlayerGui)
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "AmbienteDeTestes_Gui"
-ScreenGui.ResetOnSpawn = false
+-- [[ CRIAÇÃO DO FOV CENTRALIZADO ]] --
+local FovCircle = nil
 pcall(function()
-    ScreenGui.Parent = CoreGui
+    FovCircle = Drawing.new("Circle")
+    FovCircle.Thickness = 1.5
+    FovCircle.Color = Color3.fromRGB(0, 255, 255)
+    FovCircle.Filled = false
+    FovCircle.Visible = false
+    FovCircle.NumSides = 64
 end)
-if not ScreenGui.Parent then
-    ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local function updateFovCircle()
+    if FovCircle then
+        FovCircle.Visible = Settings.FovEnabled
+        FovCircle.Radius = Settings.FovRadius
+        FovCircle.Position = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
+    end
 end
 
--- Botão Flutuante Arrastável para Celular / PC
+-- [[ SISTEMA DE WALL CHECK (RASTREIO DE VISIBILIDADE) ]] --
+local function isVisible(targetPart)
+    local origin = camera.CFrame.Position
+    local destination = targetPart.Position
+    local direction = destination - origin
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+    raycastParams.FilterDescendantsInstances = {LocalPlayer.Character, targetPart.Parent}
+    raycastParams.IgnoreWater = true
+    
+    local result = workspace:Raycast(origin, direction, raycastParams)
+    return result == nil -- Se for nulo, nada obstruiu o caminho
+end
+
+-- [[ BUSCA PELO ALVO MAIS PRÓXIMO DO CENTRO ]] --
+local function getClosestPlayer()
+    local closestPlayer = nil
+    local shortestDistance = math.huge
+    local screenCenter = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            if Settings.TeamCheck and player.Team == LocalPlayer.Team then
+                continue
+            end
+
+            local char = player.Character
+            if char then
+                local humanoid = char:FindFirstChildOfClass("Humanoid")
+                local targetPart = char:FindFirstChild(Settings.TargetPart)
+
+                if humanoid and humanoid.Health > 0 and targetPart then
+                    local screenPos, onScreen = camera:WorldToViewportPoint(targetPart.Position)
+
+                    if onScreen then
+                        local distance = (Vector2.new(screenPos.X, screenPos.Y) - screenCenter).Magnitude
+                        if distance <= Settings.FovRadius then
+                            if Settings.WallCheck and not isVisible(targetPart) then
+                                continue
+                            end
+
+                            if distance < shortestDistance then
+                                shortestDistance = distance
+                                closestPlayer = player
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return closestPlayer
+end
+
+-- [[ LOOP PRINCIPAL DO AIMBOT ]] --
+RunService.RenderStepped:Connect(function()
+    updateFovCircle()
+    
+    if Settings.AimbotEnabled then
+        local targetPlayer = getClosestPlayer()
+        if targetPlayer and targetPlayer.Character then
+            local targetPart = targetPlayer.Character:FindFirstChild(Settings.TargetPart)
+            if targetPart then
+                local targetPosition = targetPart.Position
+                -- Interpolação de CFrame para um movimento suave de câmera (Smoothness)
+                camera.CFrame = camera.CFrame:Lerp(CFrame.new(camera.CFrame.Position, targetPosition), Settings.Smoothness)
+            end
+        end
+    end
+end)
+
+-- [[ HOOK DE SILENT AIM (METATABLE HOOK) ]] --
+local mt = getrawmetatable(game)
+local oldIndex = mt.__index
+setreadonly(mt, false)
+
+mt.__index = newcclosure(function(self, key)
+    if Settings.SilentAimEnabled and tostring(self) == "Mouse" and (key == "Hit" or key == "Target") then
+        local targetPlayer = getClosestPlayer()
+        if targetPlayer and targetPlayer.Character then
+            local targetPart = targetPlayer.Character:FindFirstChild(Settings.TargetPart)
+            if targetPart then
+                if key == "Hit" then
+                    return targetPart.CFrame
+                elseif key == "Target" then
+                    return targetPart
+                end
+            end
+        end
+    end
+    return oldIndex(self, key)
+end)
+setreadonly(mt, true)
+
+-- [[ SISTEMA DE CHAMS (ESP HIGHLIGHT) ]] --
+local function applyChams(player)
+    if player == LocalPlayer then return end
+    
+    if ActiveHighlights[player] then
+        ActiveHighlights[player]:Destroy()
+        ActiveHighlights[player] = nil
+    end
+
+    if not Settings.ChamsEnabled then return end
+    if Settings.ChamsTeamCheck and player.Team == LocalPlayer.Team then return end
+
+    local char = player.Character
+    if char then
+        local highlight = Instance.new("Highlight")
+        highlight.Parent = char
+        highlight.FillColor = (player.Team == LocalPlayer.Team) and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 0, 0)
+        highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+        highlight.FillTransparency = 0.4
+        highlight.OutlineTransparency = 0
+        ActiveHighlights[player] = highlight
+    end
+end
+
+local function updateChams()
+    for _, player in ipairs(Players:GetPlayers()) do
+        applyChams(player)
+    end
+end
+
+Players.PlayerAdded:Connect(function(player)
+    player.CharacterAdded:Connect(function()
+        task.wait(0.5)
+        applyChams(player)
+    end)
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+    if ActiveHighlights[player] then
+        ActiveHighlights[player]:Destroy()
+        ActiveHighlights[player] = nil
+    end
+end)
+
+-- [[ CRIAÇÃO DA INTERFACE GRÁFICA MOBILE ]] --
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "MobileAssistGui"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+-- Botão Flutuante (Arrastável)
 local FloatingButton = Instance.new("TextButton")
-FloatingButton.Name = "FloatingButton"
 FloatingButton.Size = UDim2.new(0, 60, 0, 60)
-FloatingButton.Position = UDim2.new(0.1, 0, 0.4, 0)
-FloatingButton.BackgroundColor3 = Color3.fromRGB(31, 31, 46)
+FloatingButton.Position = UDim2.new(0.05, 0, 0.2, 0)
+FloatingButton.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 FloatingButton.Text = "MENU"
-FloatingButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-FloatingButton.Font = Enum.Font.GothamBold
+FloatingButton.TextColor3 = Color3.fromRGB(0, 255, 255)
+FloatingButton.Font = Enum.Font.SourceSansBold
 FloatingButton.TextSize = 14
-FloatingButton.BorderSizePixel = 0
 FloatingButton.Parent = ScreenGui
 
-local UICornerFloat = Instance.new("UICorner")
-UICornerFloat.CornerRadius = UDim.new(1, 0) -- Redondo
+local FloatingCorner = Instance.new("UICorner")
+FloatingCorner.CornerRadius = UDim.new(0.5, 0)
+FloatingCorner.Parent = FloatingButton
+
+local FloatingStroke = Instance.new("UIStroke")
+FloatingStroke.Color = Color3.fromRGB(0, 255, 255)
+FloatingStroke.Thickness = 2
+FloatingStroke.Parent = FloatingButton
+
+-- Mecânica de arrastar o botão flutuante
+local dragging, dragInput, dragStart, startPos
+FloatingButton.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = FloatingButton.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+FloatingButton.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        local delta = input.Position - dragStart
+        FloatingButton.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+-- Painel Principal do Menu
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 280, 0, 340)
+MainFrame.Position = UDim2.new(0.5, -140, 0.5, -170)
+MainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+MainFrame.Visible = false
+MainFrame.Parent = ScreenGui
+
+local MainCorner = Instance.new("UICorner")
+MainCorner.CornerRadius = UDim.new(0, 10)
+MainCorner.Parent = MainFrame
+
+local MainStroke = Instance.new("UIStroke")
+MainStroke.Color = Color3.fromRGB(0, 255, 255)
+MainStroke.Thickness = 1.5
+MainStroke.Parent = MainFrame
+
+-- Título
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 40)
+Title.BackgroundTransparency = 1
+Title.Text = "MOBILE ASSIST"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.Font = Enum.Font.SourceSansBold
+Title.TextSize = 18
+Title.Parent = MainFrame
+
+-- Container de Opções com Scroll (Mobile-friendly)
+local ScrollingFrame = Instance.new("ScrollingFrame")
+ScrollingFrame.Size = UDim2.new(1, -20, 1, -60)
+ScrollingFrame.Position = UDim2.new(0, 10, 0, 50)
+ScrollingFrame.BackgroundTransparency = 1
+ScrollingFrame.CanvasSize = UDim2.new(0, 0, 0, 420)
+ScrollingFrame.ScrollBarThickness = 4
+ScrollingFrame.Parent = MainFrame
+
+local UIListLayout = Instance.new("UIListLayout")
+UIListLayout.Padding = UDim.new(0, 8)
+UIListLayout.Parent = ScrollingFrame
+
+-- Alternar visibilidade do menu pelo botão flutuante
+FloatingButton.MouseButton1Click:Connect(function()
+    MainFrame.Visible = not MainFrame.Visible
+end)
+
+-- Função Auxiliar para Criar Toggles
+local function createToggle(name, default, callback)
+    local state = default
+    
+    local Frame = Instance.new("Frame")
+    Frame.Size = UDim2.new(1, -10, 0, 40)
+    Frame.BackgroundTransparency = 1
+    Frame.Parent = ScrollingFrame
+
+    local TextLabel = Instance.new("TextLabel")
+    TextLabel.Size = UDim2.new(0.7, 0, 1, 0)
+    TextLabel.BackgroundTransparency = 1
+    TextLabel.Text = name
+    TextLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+    TextLabel.TextXAlignment = Enum.TextXAlignment.Left
+    TextLabel.Font = Enum.Font.SourceSans
+    TextLabel.TextSize = 16
+    TextLabel.Parent = Frame
+
+    local Button = Instance.new("TextButton")
+    Button.Size = UDim2.new(0, 60, 0, 30)
+    Button.Position = UDim2.new(0.75, 0, 0.1, 0)
+    Button.BackgroundColor3 = default and Color3.fromRGB(0, 180, 0) or Color3.fromRGB(40, 40, 40)
+    Button.Text = default and "ON" or "OFF"
+    Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Button.Font = Enum.Font.SourceSansBold
+    Button.TextSize = 14
+    Button.Parent = Frame
+
+    local ButtonCorner = Instance.new("UICorner")
+    ButtonCorner.CornerRadius = UDim.new(0, 5)
+    ButtonCorner.Parent = Button
+
+    Button.MouseButton1Click:Connect(function()
+        state = not state
+        Button.BackgroundColor3 = state and Color3.fromRGB(0, 180, 0) or Color3.fromRGB(40, 40, 40)
+        Button.Text = state and "ON" or "OFF"
+        callback(state)
+    end)
+end
+
+-- [ CONTROLES DA UI ] --
+
+-- 1. Aimbot
+createToggle("Aimbot", Settings.AimbotEnabled, function(val)
+    Settings.AimbotEnabled = val
+end)
+
+-- 2. Silent Aim
+createToggle("Silent Aim", Settings.SilentAimEnabled, function(val)
+    Settings.SilentAimEnabled = val
+end)
+
+-- 3. Team Check
+createToggle("Team Check (Aim)", Settings.TeamCheck, function(val)
+    Settings.TeamCheck = val
+end)
+
+-- 4. Wall Check
+createToggle("Wall Check", Settings.WallCheck, function(val)
+    Settings.WallCheck = val
+end)
+
+-- 5. Chams (ESP)
+createToggle("Ativar Chams", Settings.ChamsEnabled, function(val)
+    Settings.ChamsEnabled = val
+    updateChams()
+end)
+
+-- 6. Team Check nos Chams (Evita mostrar aliados)
+createToggle("Ignorar Aliados nos Chams", Settings.ChamsTeamCheck, function(val)
+    Settings.ChamsTeamCheck = val
+    updateChams()
+end)
+
+-- 7. Mostrar FOV
+createToggle("Mostrar Círculo FOV", Settings.FovEnabled, function(val)
+    Settings.FovEnabled = val
+end)
+
+-- 8. Seletor de Target (Head/Chest)
+local TargetPartFrame = Instance.new("Frame")
+TargetPartFrame.Size = UDim2.new(1, -10, 0, 40)
+TargetPartFrame.BackgroundTransparency = 1
+TargetPartFrame.Parent = ScrollingFrame
+
+local TargetLabel = Instance.new("TextLabel")
+TargetLabel.Size = UDim2.new(0.5, 0, 1, 0)
+TargetLabel.BackgroundTransparency = 1
+TargetLabel.Text = "Parte do Alvo"
+TargetLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+TargetLabel.TextXAlignment = Enum.TextXAlignment.Left
+TargetLabel.Font = Enum.Font.SourceSans
+TargetLabel.TextSize = 16
+TargetLabel.Parent = TargetPartFrame
+
+local TargetBtn = Instance.new("TextButton")
+TargetBtn.Size = UDim2.new(0, 100, 0, 30)
+TargetBtn.Position = UDim2.new(0.6, 0, 0.1, 0)
+TargetBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+TargetBtn.Text = "Cabeça"
+TargetBtn.TextColor3 = Color3.fromRGB(0, 255, 255)
+TargetBtn.Font = Enum.Font.SourceSansBold
+TargetBtn.TextSize = 14
+TargetBtn.Parent = TargetPartFrame
+
+local TargetCorner = Instance.new("UICorner")
+TargetCorner.CornerRadius = UDim.new(0, 5)
+TargetCorner.Parent = TargetBtn
+
+TargetBtn.MouseButton1Click:Connect(function()
+    if Settings.TargetPart == "Head" then
+        Settings.TargetPart = "UpperTorso" -- Parte superior do peito/tronco
+        TargetBtn.Text = "Peito"
+    else
+        Settings.TargetPart = "Head"
+        TargetBtn.Text = "Cabeça"
+    end
+end)
+
+-- 9. Ajuste de Tamanho do FOV (+ / -)
+local FovSizeFrame = Instance.new("Frame")
+FovSizeFrame.Size = UDim2.new(1, -10, 0, 40)
+FovSizeFrame.BackgroundTransparency = 1
+FovSizeFrame.Parent = ScrollingFrame
+
+local FovSizeLabel = Instance.new("TextLabel")
+FovSizeLabel.Size = UDim2.new(0.5, 0, 1, 0)
+FovSizeLabel.BackgroundTransparency = 1
+FovSizeLabel.Text = "Tamanho FOV: " .. tostring(Settings.FovRadius)
+FovSizeLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+FovSizeLabel.TextXAlignment = Enum.TextXAlignment.Left
+FovSizeLabel.Font = Enum.Font.SourceSans
+FovSizeLabel.TextSize = 16
+FovSizeLabel.Parent = FovSizeFrame
+
+local FovMinusBtn = Instance.new("TextButton")
+FovMinusBtn.Size = UDim2.new(0, 30, 0, 30)
+FovMinusBtn.Position = UDim2.new(0.65, 0, 0.1, 0)
+FovMinusBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+FovMinusBtn.Text = "-"
+FovMinusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+FovMinusBtn.Font = Enum.Font.SourceSansBold
+FovMinusBtn.TextSize = 16
+FovMinusBtn.Parent = FovSizeFrame
+Instance.new("UICorner", FovMinusBtn).CornerRadius = UDim.new(0, 5)
+
+local FovPlusBtn = Instance.new("TextButton")
+FovPlusBtn.Size = UDim2.new(0, 30, 0, 30)
+FovPlusBtn.Position = UDim2.new(0.82, 0, 0.1, 0)
+FovPlusBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+FovPlusBtn.Text = "+"
+FovPlusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+FovPlusBtn.Font = Enum.Font.SourceSansBold
+FovPlusBtn.TextSize = 16
+FovPlusBtn.Parent = FovSizeFrame
+Instance.new("UICorner", FovPlusBtn).CornerRadius = UDim.new(0, 5)
+
+FovMinusBtn.MouseButton1Click:Connect(function()
+    Settings.FovRadius = math.max(20, Settings.FovRadius - 10)
+    FovSizeLabel.Text = "Tamanho FOV: " .. tostring(Settings.FovRadius)
+end)
+
+FovPlusBtn.MouseButton1Click:Connect(function()
+    Settings.FovRadius = math.min(500, Settings.FovRadius + 10)
+    FovSizeLabel.Text = "Tamanho FOV: " .. tostring(Settings.FovRadius)
+end)
+
+-- Monitoramento para Chams atualizarem caso o jogador mude de time
+Players.PlayerAdded:Connect(function(player)
+    player:GetPropertyChangedSignal("Team"):Connect(updateChams)
+end)
+LocalPlayer:GetPropertyChangedSignal("Team"):Connect(updateChams)
+
+updateChams()UICornerFloat.CornerRadius = UDim.new(1, 0) -- Redondo
 UICornerFloat.Parent = FloatingButton
 
 local UIStrokeFloat = Instance.new("UIStroke")
