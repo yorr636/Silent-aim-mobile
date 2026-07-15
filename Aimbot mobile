@@ -1,5 +1,5 @@
--- [[ ASSISTENTE MOBILE MULTI-FUNCIONAL V2 ]] --
--- Versão Otimizada com Autorefresh, Suporte a Bots e Trava Instantânea.
+-- [[ ASSISTENTE MOBILE MULTI-FUNCIONAL V2.1 - CORRIGIDO ]] --
+-- Correção de memória no Wall Check para evitar lag e crashes em executores Mobile.
 
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
@@ -10,9 +10,9 @@ local camera = workspace.CurrentCamera
 -- Configurações Globais
 local Settings = {
     AimbotEnabled = false,
-    InstantLock = true, -- Ativado por padrão para velocidade máxima
+    InstantLock = true,
     SilentAimEnabled = false,
-    BotSupport = false, -- Ativa/desativa foco em bots
+    BotSupport = false,
     TeamCheck = false,
     WallCheck = false,
     TargetPart = "Head", -- "Head" ou "UpperTorso"
@@ -46,18 +46,35 @@ local function updateFovCircle()
     end
 end
 
--- [[ SISTEMA DE VISIBILIDADE (WALL CHECK) ]] --
+-- [[ SISTEMA DE VISIBILIDADE GLOBAL (Otimizado contra crash) ]] --
+local GlobalRaycastParams = RaycastParams.new()
+GlobalRaycastParams.FilterType = Enum.RaycastFilterType.Exclude
+GlobalRaycastParams.IgnoreWater = true
+
 local function isVisible(targetPart)
-    local origin = camera.CFrame.Position
-    local destination = targetPart.Position
-    local direction = destination - origin
-    local raycastParams = RaycastParams.new()
-    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-    raycastParams.FilterDescendantsInstances = {LocalPlayer.Character, targetPart.Parent}
-    raycastParams.IgnoreWater = true
+    -- O pcall protege o executor caso o alvo seja destruído no meio do cálculo
+    local success, visible = pcall(function()
+        if not targetPart or not targetPart.Parent then return false end
+        
+        local character = LocalPlayer.Character
+        if not character then return false end
+
+        local origin = camera.CFrame.Position
+        local destination = targetPart.Position
+        local direction = destination - origin
+        
+        -- Atualiza os filtros sem recriar o objeto na memória
+        local filter = {character}
+        if targetPart.Parent then
+            table.insert(filter, targetPart.Parent)
+        end
+        GlobalRaycastParams.FilterDescendantsInstances = filter
+        
+        local result = workspace:Raycast(origin, direction, GlobalRaycastParams)
+        return result == nil -- Se for nil, o caminho está livre de barreiras físicas
+    end)
     
-    local result = workspace:Raycast(origin, direction, raycastParams)
-    return result == nil
+    return success and visible
 end
 
 -- [[ BUSCADOR INTEGRADO (PLAYERS & BOTS) ]] --
@@ -71,6 +88,473 @@ local function getClosestTarget()
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer then
             if Settings.TeamCheck and player.Team == LocalPlayer.Team then
+                continue
+            end
+
+            local char = player.Character
+            if char then
+                local humanoid = char:FindFirstChildOfClass("Humanoid")
+                local targetPart = char:FindFirstChild(Settings.TargetPart)
+
+                if humanoid and humanoid.Health > 0 and targetPart then
+                    local screenPos, onScreen = camera:WorldToViewportPoint(targetPart.Position)
+
+                    if onScreen then
+                        local distance = (Vector2.new(screenPos.X, screenPos.Y) - screenCenter).Magnitude
+                        if distance <= Settings.FovRadius then
+                            if Settings.WallCheck and not isVisible(targetPart) then
+                                continue
+                            end
+
+                            if distance < shortestDistance then
+                                shortestDistance = distance
+                                closestTarget = player
+                                closestPart = targetPart
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- Rastrear Bots no Workspace
+    if Settings.BotSupport then
+        for _, bot in ipairs(BotList) do
+            if bot and bot.Parent then
+                local humanoid = bot:FindFirstChildOfClass("Humanoid")
+                local targetPart = bot:FindFirstChild(Settings.TargetPart) or bot:FindFirstChild("Head") or bot:FindFirstChild("HumanoidRootPart")
+
+                if humanoid and humanoid.Health > 0 and targetPart then
+                    local screenPos, onScreen = camera:WorldToViewportPoint(targetPart.Position)
+
+                    if onScreen then
+                        local distance = (Vector2.new(screenPos.X, screenPos.Y) - screenCenter).Magnitude
+                        if distance <= Settings.FovRadius then
+                            if Settings.WallCheck and not isVisible(targetPart) then
+                                continue
+                            end
+
+                            if distance < shortestDistance then
+                                shortestDistance = distance
+                                closestTarget = bot
+                                closestPart = targetPart
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return closestTarget, closestPart
+end
+
+-- [[ LOOP DO AIMBOT ]] --
+RunService.RenderStepped:Connect(function()
+    updateFovCircle()
+    
+    if Settings.AimbotEnabled then
+        local _, targetPart = getClosestTarget()
+        if targetPart then
+            local targetPosition = targetPart.Position
+            if Settings.InstantLock then
+                camera.CFrame = CFrame.new(camera.CFrame.Position, targetPosition)
+            else
+                camera.CFrame = camera.CFrame:Lerp(CFrame.new(camera.CFrame.Position, targetPosition), Settings.Smoothness)
+            end
+        end
+    end
+end)
+
+-- [[ BYPASS E HOOK METATABLE PARA SILENT AIM UNIVERSAL ]] --
+local mt = getrawmetatable(game)
+local oldIndex = mt.__index
+local oldNamecall = mt.__namecall
+setreadonly(mt, false)
+
+mt.__index = newcclosure(function(self, key)
+    if Settings.SilentAimEnabled and not checkcaller() then
+        if tostring(self) == "Mouse" and (key == "Hit" or key == "Target") then
+            local _, targetPart = getClosestTarget()
+            if targetPart then
+                if key == "Hit" then
+                    return targetPart.CFrame
+                elseif key == "Target" then
+                    return targetPart
+                end
+            end
+        end
+    end
+    return oldIndex(self, key)
+end)
+
+mt.__namecall = newcclosure(function(self, ...)
+    local method = getnamecallmethod()
+    local args = {...}
+    if Settings.SilentAimEnabled and not checkcaller() then
+        if method == "Raycast" and self == workspace then
+            local _, targetPart = getClosestTarget()
+            if targetPart then
+                local origin = args[1]
+                local direction = args[2]
+                local newDirection = (targetPart.Position - origin).Unit * direction.Magnitude
+                args[2] = newDirection
+                return oldNamecall(self, unpack(args))
+            end
+        elseif (method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList") and self == workspace then
+            local _, targetPart = getClosestTarget()
+            if targetPart then
+                local ray = args[1]
+                local newRay = Ray.new(ray.Origin, (targetPart.Position - ray.Origin).Unit * ray.Direction.Magnitude)
+                args[1] = newRay
+                return oldNamecall(self, unpack(args))
+            end
+        end
+    end
+    return oldNamecall(self, ...)
+end)
+setreadonly(mt, true)
+
+-- [[ FUNÇÕES DE CHAMS (ESP HIGHLIGHT) ]] --
+local function applyChamsToCharacter(char, isAlly)
+    if not char then return end
+    
+    local existing = char:FindFirstChild("MobileAssistHighlight")
+    if existing then
+        existing:Destroy()
+    end
+
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "MobileAssistHighlight"
+    highlight.Parent = char
+    highlight.FillColor = isAlly and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 0, 0)
+    highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+    highlight.FillTransparency = 0.4
+    highlight.OutlineTransparency = 0
+    
+    ActiveHighlights[char] = highlight
+end
+
+local function clearAllChams()
+    for char, highlight in pairs(ActiveHighlights) do
+        if highlight then
+            pcall(function() highlight:Destroy() end)
+        end
+    end
+    table.clear(ActiveHighlights)
+end
+
+-- [[ THREAD DE RELOAD AUTOMÁTICO (A CADA 1.5S) ]] --
+task.spawn(function()
+    while true do
+        task.wait(1.5)
+
+        -- 1. Limpeza de lixo e mortos
+        for char, highlight in pairs(ActiveHighlights) do
+            if not char or not char.Parent or not char:FindFirstChildOfClass("Humanoid") or char:FindFirstChildOfClass("Humanoid").Health <= 0 then
+                pcall(function() highlight:Destroy() end)
+                ActiveHighlights[char] = nil
+            end
+        end
+
+        -- 2. Recalcular e catalogar bots ativos
+        local tempBots = {}
+        if Settings.BotSupport then
+            for _, desc in ipairs(workspace:GetDescendants()) do
+                if desc:IsA("Model") and desc:FindFirstChildOfClass("Humanoid") then
+                    local isPlayer = Players:GetPlayerFromCharacter(desc)
+                    local hum = desc:FindFirstChildOfClass("Humanoid")
+                    if not isPlayer and hum and hum.Health > 0 then
+                        table.insert(tempBots, desc)
+                    end
+                end
+            end
+        end
+        BotList = tempBots
+
+        -- 3. Atualizar Chams de todos os alvos válidos
+        if Settings.ChamsEnabled then
+            for _, player in ipairs(Players:GetPlayers()) do
+                if player ~= LocalPlayer and player.Character then
+                    local isAlly = (player.Team == LocalPlayer.Team)
+                    if Settings.ChamsTeamCheck and isAlly then
+                        local existing = player.Character:FindFirstChild("MobileAssistHighlight")
+                        if existing then existing:Destroy() end
+                    else
+                        applyChamsToCharacter(player.Character, isAlly)
+                    end
+                end
+            end
+
+            for _, bot in ipairs(BotList) do
+                applyChamsToCharacter(bot, false) -- Bots aparecem em vermelho
+            end
+        else
+            clearAllChams()
+        end
+    end
+end)
+
+-- [[ INTERFACE GRÁFICA MOBILE ]] --
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "MobileAssistGui"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+-- Botão Flutuante
+local FloatingButton = Instance.new("TextButton")
+FloatingButton.Size = UDim2.new(0, 60, 0, 60)
+FloatingButton.Position = UDim2.new(0.05, 0, 0.2, 0)
+FloatingButton.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+FloatingButton.Text = "MENU"
+FloatingButton.TextColor3 = Color3.fromRGB(0, 255, 255)
+FloatingButton.Font = Enum.Font.SourceSansBold
+FloatingButton.TextSize = 14
+FloatingButton.Parent = ScreenGui
+
+local FloatingCorner = Instance.new("UICorner")
+FloatingCorner.CornerRadius = UDim.new(0.5, 0)
+FloatingCorner.Parent = FloatingButton
+
+local FloatingStroke = Instance.new("UIStroke")
+FloatingStroke.Color = Color3.fromRGB(0, 255, 255)
+FloatingStroke.Thickness = 2
+FloatingStroke.Parent = FloatingButton
+
+-- Movimento do Botão Flutuante (Arrastável no Celular)
+local dragging, dragInput, dragStart, startPos
+FloatingButton.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = FloatingButton.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+FloatingButton.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        local delta = input.Position - dragStart
+        FloatingButton.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+-- Menu Principal
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 280, 0, 360)
+MainFrame.Position = UDim2.new(0.5, -140, 0.5, -180)
+MainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+MainFrame.Visible = false
+MainFrame.Parent = ScreenGui
+
+local MainCorner = Instance.new("UICorner")
+MainCorner.CornerRadius = UDim.new(0, 10)
+MainCorner.Parent = MainFrame
+
+local MainStroke = Instance.new("UIStroke")
+MainStroke.Color = Color3.fromRGB(0, 255, 255)
+MainStroke.Thickness = 1.5
+MainStroke.Parent = MainFrame
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 40)
+Title.BackgroundTransparency = 1
+Title.Text = "MOBILE ASSIST V2.1"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.Font = Enum.Font.SourceSansBold
+Title.TextSize = 18
+Title.Parent = MainFrame
+
+local ScrollingFrame = Instance.new("ScrollingFrame")
+ScrollingFrame.Size = UDim2.new(1, -20, 1, -60)
+ScrollingFrame.Position = UDim2.new(0, 10, 0, 50)
+ScrollingFrame.BackgroundTransparency = 1
+ScrollingFrame.CanvasSize = UDim2.new(0, 0, 0, 500)
+ScrollingFrame.ScrollBarThickness = 4
+ScrollingFrame.Parent = MainFrame
+
+local UIListLayout = Instance.new("UIListLayout")
+UIListLayout.Padding = UDim.new(0, 8)
+UIListLayout.Parent = ScrollingFrame
+
+FloatingButton.MouseButton1Click:Connect(function()
+    MainFrame.Visible = not MainFrame.Visible
+end)
+
+-- Criador de Toggles
+local function createToggle(name, default, callback)
+    local state = default
+    
+    local Frame = Instance.new("Frame")
+    Frame.Size = UDim2.new(1, -10, 0, 40)
+    Frame.BackgroundTransparency = 1
+    Frame.Parent = ScrollingFrame
+
+    local TextLabel = Instance.new("TextLabel")
+    TextLabel.Size = UDim2.new(0.7, 0, 1, 0)
+    TextLabel.BackgroundTransparency = 1
+    TextLabel.Text = name
+    TextLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+    TextLabel.TextXAlignment = Enum.TextXAlignment.Left
+    TextLabel.Font = Enum.Font.SourceSans
+    TextLabel.TextSize = 16
+    TextLabel.Parent = Frame
+
+    local Button = Instance.new("TextButton")
+    Button.Size = UDim2.new(0, 60, 0, 30)
+    Button.Position = UDim2.new(0.75, 0, 0.1, 0)
+    Button.BackgroundColor3 = default and Color3.fromRGB(0, 180, 0) or Color3.fromRGB(40, 40, 40)
+    Button.Text = default and "ON" or "OFF"
+    Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Button.Font = Enum.Font.SourceSansBold
+    Button.TextSize = 14
+    Button.Parent = Frame
+
+    local ButtonCorner = Instance.new("UICorner")
+    ButtonCorner.CornerRadius = UDim.new(0, 5)
+    ButtonCorner.Parent = Button
+
+    Button.MouseButton1Click:Connect(function()
+        state = not state
+        Button.BackgroundColor3 = state and Color3.fromRGB(0, 180, 0) or Color3.fromRGB(40, 40, 40)
+        Button.Text = state and "ON" or "OFF"
+        callback(state)
+    end)
+end
+
+-- [ ADICIONANDO RECURSOS À UI ] --
+
+createToggle("Aimbot", Settings.AimbotEnabled, function(val)
+    Settings.AimbotEnabled = val
+end)
+
+createToggle("Trava Instantanea", Settings.InstantLock, function(val)
+    Settings.InstantLock = val
+end)
+
+createToggle("Silent Aim", Settings.SilentAimEnabled, function(val)
+    Settings.SilentAimEnabled = val
+end)
+
+createToggle("Suporte para Bots", Settings.BotSupport, function(val)
+    Settings.BotSupport = val
+end)
+
+createToggle("Team Check (Aim)", Settings.TeamCheck, function(val)
+    Settings.TeamCheck = val
+end)
+
+createToggle("Wall Check", Settings.WallCheck, function(val)
+    Settings.WallCheck = val
+end)
+
+createToggle("Ativar Chams", Settings.ChamsEnabled, function(val)
+    Settings.ChamsEnabled = val
+end)
+
+createToggle("Ignorar Aliados (Chams)", Settings.ChamsTeamCheck, function(val)
+    Settings.ChamsTeamCheck = val
+end)
+
+createToggle("Mostrar Circulo FOV", Settings.FovEnabled, function(val)
+    Settings.FovEnabled = val
+end)
+
+-- Seletor Head / Chest (Alvo)
+local TargetPartFrame = Instance.new("Frame")
+TargetPartFrame.Size = UDim2.new(1, -10, 0, 40)
+TargetPartFrame.BackgroundTransparency = 1
+TargetPartFrame.Parent = ScrollingFrame
+
+local TargetLabel = Instance.new("TextLabel")
+TargetLabel.Size = UDim2.new(0.5, 0, 1, 0)
+TargetLabel.BackgroundTransparency = 1
+TargetLabel.Text = "Parte do Alvo"
+TargetLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+TargetLabel.TextXAlignment = Enum.TextXAlignment.Left
+TargetLabel.Font = Enum.Font.SourceSans
+TargetLabel.TextSize = 16
+TargetLabel.Parent = TargetPartFrame
+
+local TargetBtn = Instance.new("TextButton")
+TargetBtn.Size = UDim2.new(0, 100, 0, 30)
+TargetBtn.Position = UDim2.new(0.6, 0, 0.1, 0)
+TargetBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+TargetBtn.Text = "Cabeça"
+TargetBtn.TextColor3 = Color3.fromRGB(0, 255, 255)
+TargetBtn.Font = Enum.Font.SourceSansBold
+TargetBtn.TextSize = 14
+TargetBtn.Parent = TargetPartFrame
+Instance.new("UICorner", TargetBtn).CornerRadius = UDim.new(0, 5)
+
+TargetBtn.MouseButton1Click:Connect(function()
+    if Settings.TargetPart == "Head" then
+        Settings.TargetPart = "UpperTorso"
+        TargetBtn.Text = "Peito"
+    else
+        Settings.TargetPart = "Head"
+        TargetBtn.Text = "Cabeça"
+    end
+end)
+
+-- Ajuste do FOV (+ / -)
+local FovSizeFrame = Instance.new("Frame")
+FovSizeFrame.Size = UDim2.new(1, -10, 0, 40)
+FovSizeFrame.BackgroundTransparency = 1
+FovSizeFrame.Parent = ScrollingFrame
+
+local FovSizeLabel = Instance.new("TextLabel")
+FovSizeLabel.Size = UDim2.new(0.5, 0, 1, 0)
+FovSizeLabel.BackgroundTransparency = 1
+FovSizeLabel.Text = "Tamanho FOV: " .. tostring(Settings.FovRadius)
+FovSizeLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+FovSizeLabel.TextXAlignment = Enum.TextXAlignment.Left
+FovSizeLabel.Font = Enum.Font.SourceSans
+FovSizeLabel.TextSize = 16
+FovSizeLabel.Parent = FovSizeFrame
+
+local FovMinusBtn = Instance.new("TextButton")
+FovMinusBtn.Size = UDim2.new(0, 30, 0, 30)
+FovMinusBtn.Position = UDim2.new(0.65, 0, 0.1, 0)
+FovMinusBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+FovMinusBtn.Text = "-"
+FovMinusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+FovMinusBtn.Font = Enum.Font.SourceSansBold
+FovMinusBtn.TextSize = 16
+FovMinusBtn.Parent = FovSizeFrame
+Instance.new("UICorner", FovMinusBtn).CornerRadius = UDim.new(0, 5)
+
+local FovPlusBtn = Instance.new("TextButton")
+FovPlusBtn.Size = UDim2.new(0, 30, 0, 30)
+FovPlusBtn.Position = UDim2.new(0.82, 0, 0.1, 0)
+FovPlusBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+FovPlusBtn.Text = "+"
+FovPlusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+FovPlusBtn.Font = Enum.Font.SourceSansBold
+FovPlusBtn.TextSize = 16
+FovPlusBtn.Parent = FovSizeFrame
+Instance.new("UICorner", FovPlusBtn).CornerRadius = UDim.new(0, 5)
+
+FovMinusBtn.MouseButton1Click:Connect(function()
+    Settings.FovRadius = math.max(20, Settings.FovRadius - 10)
+    FovSizeLabel.Text = "Tamanho FOV: " .. tostring(Settings.FovRadius)
+end)
+
+FovPlusBtn.MouseButton1Click:Connect(function()
+    Settings.FovRadius = math.min(500, Settings.FovRadius + 10)
+    FovSizeLabel.Text = "Tamanho FOV: " .. tostring(Settings.FovRadius)
+end)            if Settings.TeamCheck and player.Team == LocalPlayer.Team then
                 continue
             end
 
